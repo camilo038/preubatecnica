@@ -1,0 +1,78 @@
+{
+  "info": {
+    "name": "Inventario reservas",
+    "description": "Para probar las reservas de inventario.\n\nPrimero se levanta el server con `mvn compile exec:java` (queda en el 8080, si está ocupado se usa `mvn compile exec:java -Dexec.args=18080` y se cambia `baseUrl`). Después se corren las peticiones en orden. La documentación completa está en `{{baseUrl}}/swagger`.\n\nCódigos de error: 400 si los datos vienen mal, 409 si no hay stock o el pedido no tiene reserva activa, 422 si se pasa del límite por pedido.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "sku", "value": "TV-55" },
+    { "key": "orderId", "value": "PED-1001" }
+  ],
+  "item": [
+    {
+      "name": "1 Registrar producto",
+      "request": {
+        "method": "POST",
+        "description": "Lo usa el backoffice. Da de alta el producto con su categoría: STANDARD, PRE_ORDER o FLASH_SALE. La categoría define cuánto tiempo hay para pagar y si hay límite por pedido.",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"category\": \"FLASH_SALE\"\n}" },
+        "url": "{{baseUrl}}/products"
+      }
+    },
+    {
+      "name": "2 Cargar stock",
+      "request": {
+        "method": "POST",
+        "description": "Lo usa compras cuando llega mercancía. Suma unidades al producto y deja listo otra vez el aviso de stock bajo.",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"quantity\": 7\n}" },
+        "url": "{{baseUrl}}/products/{{sku}}/stock"
+      }
+    },
+    {
+      "name": "3 Reservar",
+      "request": {
+        "method": "POST",
+        "description": "Lo llama la app cuando el cliente envía el carrito. Aparta las unidades hasta `expiresAt`, si no paga antes se liberan solas.\n\nSi la app reintenta con el mismo pedido devuelve la misma reserva, no aparta dos veces. Con 7 de stock y 2 reservadas quedan 5, y en la consola del server sale el aviso a compras.",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 2\n}" },
+        "url": "{{baseUrl}}/reservations"
+      }
+    },
+    {
+      "name": "4 Reservar pasando el límite (422)",
+      "request": {
+        "method": "POST",
+        "description": "FLASH_SALE deja máximo 2 unidades por pedido, así que esta tiene que fallar con 422.",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"orderId\": \"PED-1002\",\n  \"sku\": \"{{sku}}\",\n  \"quantity\": 3\n}" },
+        "url": "{{baseUrl}}/reservations"
+      }
+    },
+    {
+      "name": "5 Disponibles",
+      "request": {
+        "method": "GET",
+        "description": "Lo consulta la app. Son las unidades que todavía se pueden reservar: stock menos reservas que no han vencido.",
+        "url": "{{baseUrl}}/products/{{sku}}/available"
+      }
+    },
+    {
+      "name": "6 Confirmar pago",
+      "request": {
+        "method": "POST",
+        "description": "Lo llama la pasarela cuando aprueba el pago. Las unidades reservadas quedan vendidas.",
+        "url": "{{baseUrl}}/reservations/{{orderId}}/confirm"
+      }
+    },
+    {
+      "name": "7 Confirmar otra vez (409)",
+      "request": {
+        "method": "POST",
+        "description": "El pedido ya se confirmó y no tiene reserva activa, entonces da 409. Lo mismo pasa si la reserva ya venció.",
+        "url": "{{baseUrl}}/reservations/{{orderId}}/confirm"
+      }
+    }
+  ]
+}

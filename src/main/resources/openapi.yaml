@@ -1,0 +1,181 @@
+openapi: 3.0.3
+info:
+  title: Inventario
+  version: 1.0.0
+  description: |
+    Reserva unidades mientras el cliente paga para no sobrevender.
+
+    Flujo normal: el backoffice registra el producto, compras carga stock, la app reserva al enviar el carrito
+    y la pasarela confirma cuando el pago se aprueba. Si nadie confirma a tiempo, la reserva se libera sola.
+
+    | Categoría | Tiempo para pagar | Límite por pedido |
+    | --- | --- | --- |
+    | STANDARD | 15 minutos | sin límite |
+    | PRE_ORDER | 24 horas | sin límite |
+    | FLASH_SALE | 5 minutos | 2 unidades |
+
+    Cuando a un producto le quedan 5 o menos se avisa a compras una sola vez, hasta que se vuelva a cargar stock.
+    Por ahora el aviso sale en la consola del server.
+tags:
+  - name: Productos
+  - name: Reservas
+paths:
+  /products:
+    post:
+      tags: [Productos]
+      summary: Registrar producto
+      description: Lo usa el backoffice. Da de alta el sku con su categoría. Si ya existe con la misma categoría no hace nada.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewProduct'
+      responses:
+        '201':
+          description: Registrado
+          content:
+            application/json:
+              example: { sku: TV-55 }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /products/{sku}/stock:
+    post:
+      tags: [Productos]
+      summary: Cargar stock
+      description: Lo usa compras cuando llega mercancía. Suma unidades y deja listo otra vez el aviso de stock bajo.
+      parameters:
+        - $ref: '#/components/parameters/Sku'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 1, example: 7 }
+      responses:
+        '200':
+          description: Stock actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Available'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /products/{sku}/available:
+    get:
+      tags: [Productos]
+      summary: Unidades disponibles
+      description: Lo consulta la app. Es el stock menos las reservas que no han vencido. Si el sku no existe devuelve 0.
+      parameters:
+        - $ref: '#/components/parameters/Sku'
+      responses:
+        '200':
+          description: Disponibles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Available'
+  /reservations:
+    post:
+      tags: [Reservas]
+      summary: Reservar
+      description: |
+        Lo llama la app cuando el cliente envía el carrito, un pedido por producto. Aparta las unidades hasta `expiresAt`.
+
+        Si la app reintenta el mismo pedido con la misma cantidad devuelve la misma reserva y no aparta dos veces.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewReservation'
+      responses:
+        '201':
+          description: Reservado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: No hay stock suficiente o el pedido ya se usó con otra cantidad u otro producto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Pasa el límite por pedido de la categoría
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /reservations/{orderId}/confirm:
+    post:
+      tags: [Reservas]
+      summary: Confirmar pago
+      description: Lo llama la pasarela cuando aprueba el pago. Las unidades quedan vendidas y no vuelven al stock.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string, example: PED-1001 }
+      responses:
+        '200':
+          description: Confirmado
+          content:
+            application/json:
+              example: { orderId: PED-1001, status: CONFIRMED }
+        '409':
+          description: El pedido no tiene reserva activa (no existe, ya venció o ya se confirmó)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  parameters:
+    Sku:
+      name: sku
+      in: path
+      required: true
+      schema: { type: string, example: TV-55 }
+  responses:
+    BadRequest:
+      description: Faltan datos o vienen mal
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    NewProduct:
+      type: object
+      required: [sku, category]
+      properties:
+        sku: { type: string, example: TV-55 }
+        category: { type: string, enum: [STANDARD, PRE_ORDER, FLASH_SALE] }
+    NewReservation:
+      type: object
+      required: [orderId, sku, quantity]
+      properties:
+        orderId: { type: string, example: PED-1001 }
+        sku: { type: string, example: TV-55 }
+        quantity: { type: integer, minimum: 1, example: 2 }
+    Reservation:
+      type: object
+      properties:
+        orderId: { type: string }
+        sku: { type: string }
+        quantity: { type: integer }
+        expiresAt: { type: string, format: date-time }
+    Available:
+      type: object
+      properties:
+        sku: { type: string }
+        available: { type: integer }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
